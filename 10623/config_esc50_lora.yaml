@@ -1,0 +1,37 @@
+# Configuration for fine-tuning MusicGen-small on ESC-50 with LoRA
+
+# Model configuration
+model_name: 'facebook/musicgen-small'  # Base MusicGen model
+lora_rank: 8                           # LoRA rank (r)
+lora_alpha: 16.0                        # LoRA alpha scaling factor
+lora_dropout: 0.0                      # LoRA dropout probability
+
+# Dataset configuration
+dataset:
+  root: null                            # Path to ESC-50 dataset (set via ESC50_ROOT env var or override here)
+  sample_rate: 32000                   # Target sample rate
+  segment_duration: null                # Duration of segments (null = full audio)
+  channels: 1                           # Number of channels (1 = mono)
+
+# Training configuration
+training:
+  batch_size: 4                         # Batch size per GPU
+  val_batch_size: 4                     # Validation batch size
+  learning_rate: 1e-4                   # Learning rate for LoRA parameters
+  weight_decay: 0.01                    # Weight decay
+  epochs: 50                            # Number of training epochs
+  num_workers: 4                        # Number of data loading workers
+  max_grad_norm: 1.0                    # Gradient clipping (0 = disabled)
+  use_amp: true                         # Use automatic mixed precision
+  scheduler: 'cosine'                   # Learning rate scheduler (null/cosine)
+
+# Evaluation configuration
+eval:
+  batch_size: 4                         # Evaluation batch size
+  num_workers: 4                        # Number of workers for evaluation
+  eval_num_samples: 100                 # Number of samples to evaluate
+  gen_duration: 10.0                    # Generation duration in seconds
+
+# Device configuration
+device: 'cuda'                          # Device to use (cuda/cpu)
+
