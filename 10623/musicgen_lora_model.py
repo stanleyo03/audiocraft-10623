@@ -189,6 +189,46 @@ class MusicGenLoRA(MusicGen):
                 module.lora_A.requires_grad = True
                 module.lora_B.requires_grad = True
     
+    def to_device(self, device: tp.Union[str, torch.device]):
+        """Move model to device, ensuring LoRA parameters are moved too.
+        
+        Args:
+            device: Target device (e.g., 'cuda', 'cpu', or torch.device)
+        """
+        if isinstance(device, str):
+            device = torch.device(device)
+        
+        # Move compression model
+        if hasattr(self.compression_model, 'to'):
+            self.compression_model = self.compression_model.to(device)
+        else:
+            # Manual move for non-nn.Module
+            for param in self.compression_model.parameters():
+                param.data = param.data.to(device)
+                if param.grad is not None:
+                    param.grad = param.grad.to(device)
+        
+        # Move language model
+        if hasattr(self.lm, 'to'):
+            self.lm = self.lm.to(device)
+        else:
+            # Manual move for non-nn.Module
+            for param in self.lm.parameters():
+                param.data = param.data.to(device)
+                if param.grad is not None:
+                    param.grad = param.grad.to(device)
+        
+        # Explicitly move LoRA parameters
+        for module in self.lm.modules():
+            if isinstance(module, LoRALinear):
+                module.lora_A.data = module.lora_A.data.to(device)
+                module.lora_B.data = module.lora_B.data.to(device)
+                # Also move dropout if it has parameters (it shouldn't, but just in case)
+                if hasattr(module.dropout, 'to'):
+                    module.dropout = module.dropout.to(device)
+        
+        return self
+    
     def get_lora_parameters(self):
         """Get all LoRA parameters for optimizer."""
         # BaseGenModel is not a nn.Module, so get parameters from lm
@@ -268,6 +308,10 @@ def create_musicgen_lora(
         lora_dropout=lora_dropout,
         target_modules=target_modules,
     )
+    
+    # Explicitly move to device to ensure LoRA parameters are on correct device
+    if device is not None:
+        model.to_device(device)
     
     return model
 

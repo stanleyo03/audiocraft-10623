@@ -51,11 +51,14 @@ class LoRALinear(nn.Module):
         in_features = linear_layer.in_features
         out_features = linear_layer.out_features
         
-        # Initialize LoRA weights
+        # Get device from the wrapped linear layer
+        device = next(linear_layer.parameters()).device
+        
+        # Initialize LoRA weights on the same device as the linear layer
         # lora_A: random initialization with small values
-        self.lora_A = nn.Parameter(torch.randn(rank, in_features) * 0.02)
+        self.lora_A = nn.Parameter(torch.randn(rank, in_features, device=device) * 0.02)
         # lora_B: zeros so initial output is zero (delta = 0 at start)
-        self.lora_B = nn.Parameter(torch.zeros(out_features, rank))
+        self.lora_B = nn.Parameter(torch.zeros(out_features, rank, device=device))
         
         # Ensure no NaN/Inf in initialization
         assert not torch.isnan(self.lora_A).any(), "NaN in lora_A initialization"
@@ -65,6 +68,14 @@ class LoRALinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Original output
         output = self.linear(x)
+        
+        # Ensure LoRA parameters are on the same device as input
+        # (safeguard in case they weren't moved properly)
+        device = x.device
+        if self.lora_A.device != device:
+            self.lora_A.data = self.lora_A.data.to(device)
+        if self.lora_B.device != device:
+            self.lora_B.data = self.lora_B.data.to(device)
         
         # LoRA adaptation: BA @ x
         # lora_A: [rank, in_features], we need [in_features, rank] for matmul

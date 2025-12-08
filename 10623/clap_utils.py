@@ -45,7 +45,18 @@ class CLAPEvaluator:
         
         self.device = device
         self.model = laion_clap.CLAP_Module(enable_fusion=False, device=device)
-        self.model.load_ckpt(model_name=model_name)
+        # Try different ways to load the model
+        try:
+            # Try with model_name parameter
+            self.model.load_ckpt(model_name=model_name)
+        except TypeError:
+            # If that fails, try without model_name (use default)
+            try:
+                self.model.load_ckpt()
+            except Exception as e:
+                # Last resort: try loading from URL
+                print(f"Warning: Could not load CLAP model with model_name={model_name}, trying default...")
+                self.model.load_ckpt()
         self.model.eval()
     
     @torch.no_grad()
@@ -67,7 +78,7 @@ class CLAPEvaluator:
         
         Args:
             audio: Audio waveforms [B, C, T] or [B, T]
-            sample_rate: Sample rate of audio
+            sample_rate: Sample rate of audio (CLAP expects 48kHz, will resample if needed)
             
         Returns:
             Audio embeddings [B, D]
@@ -80,11 +91,33 @@ class CLAPEvaluator:
             else:
                 audio = audio.squeeze(1)
         
-        audio_np = audio.cpu().numpy()
-        audio_embeddings = self.model.get_audio_embedding_from_data(
-            audio_np, sample_rate=sample_rate
-        )
-        return torch.tensor(audio_embeddings, device=self.device)
+        # CLAP expects 48kHz audio, resample if needed
+        if sample_rate != 48000:
+            from torchaudio.transforms import Resample
+            resampler = Resample(sample_rate, 48000).to(audio.device)
+            audio = resampler(audio)
+        
+        # Try different CLAP API versions
+        try:
+            # Try with use_tensor=True (newer API, expects tensor)
+            audio_embeddings = self.model.get_audio_embedding_from_data(
+                audio, use_tensor=True
+            )
+            if isinstance(audio_embeddings, torch.Tensor):
+                return audio_embeddings.to(self.device)
+            else:
+                return torch.tensor(audio_embeddings, device=self.device)
+        except (TypeError, AttributeError):
+            # Fallback to numpy version (older API)
+            audio_np = audio.cpu().numpy()
+            try:
+                audio_embeddings = self.model.get_audio_embedding_from_data(audio_np)
+                return torch.tensor(audio_embeddings, device=self.device)
+            except Exception as e:
+                # If that fails, try with list of arrays
+                audio_list = [audio_np[i] for i in range(audio_np.shape[0])]
+                audio_embeddings = self.model.get_audio_embedding_from_data(audio_list)
+                return torch.tensor(audio_embeddings, device=self.device)
     
     @torch.no_grad()
     def compute_similarity(
