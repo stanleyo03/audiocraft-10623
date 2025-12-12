@@ -16,10 +16,7 @@ export ESC50_ROOT=/path/to/ESC-50
 # Download from https://github.com/karolpiczak/ESC-50
 ```
 
-Option B: Use the provided script:
-```bash
-bash scripts/download_esc50.sh
-```
+Option B: Download manually from https://github.com/karolpiczak/ESC-50
 
 ### 2. Install Dependencies
 
@@ -43,23 +40,19 @@ Edit `config_esc50_lora.yaml` to adjust training parameters:
 ### Training
 
 ```bash
-bash scripts/run_train.sh
-```
-
-Or directly:
-```bash
 python train_musicgen_esc50.py --config config_esc50_lora.yaml
 ```
 
 ### Evaluation
 
 ```bash
-bash scripts/run_eval.sh
+python eval_musicgen_esc50.py --checkpoint path/to/checkpoint.pt --config config_esc50_lora.yaml
 ```
 
-Or directly:
+### Inference
+
 ```bash
-python eval_musicgen_esc50.py --checkpoint path/to/checkpoint.pt --config config_esc50_lora.yaml
+python run_inference.py
 ```
 
 ## Project Structure
@@ -69,10 +62,11 @@ python eval_musicgen_esc50.py --checkpoint path/to/checkpoint.pt --config config
 - `esc50_dataset.py`: ESC-50 dataset loader
 - `train_musicgen_esc50.py`: Training script
 - `eval_musicgen_esc50.py`: Evaluation script
+- `run_inference.py`: Inference script
 - `captions.py`: Generate captions from ESC-50 labels
-- `audio_utils.py`: Audio processing utilities
 - `clap_utils.py`: CLAP similarity evaluation utilities
 - `config_esc50_lora.yaml`: Training configuration
+- `run_in_colab_v2.ipynb`: Notebook for running on Colab/Kaggle
 
 ## Dataset Format
 

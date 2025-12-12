@@ -1,18 +1,11 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
 
-"""
-Generate natural language captions from ESC-50 category labels.
-"""
+# Generate captions from ESC-50 category labels
 
 import re
 from typing import Dict, List, Optional
 
 
-# ESC-50 category to caption templates
+# ESC-50 category to caption templates from ChatGPT
 CATEGORY_CAPTIONS: Dict[str, List[str]] = {
     # Animals
     'Dog': ['a dog barking', 'dog barking in the distance', 'a dog making sounds'],
@@ -77,14 +70,7 @@ CATEGORY_CAPTIONS: Dict[str, List[str]] = {
 
 
 def normalize_category_name(category: str) -> str:
-    """Normalize ESC-50 category name to match our dictionary.
-    
-    Args:
-        category: Category name from ESC-50
-        
-    Returns:
-        Normalized category name
-    """
+    """Normalize category name."""
     # Remove numbers and dashes, capitalize properly
     category = category.strip()
     # Handle format like "1-100032-A-0" -> extract category from filename
@@ -101,15 +87,7 @@ def normalize_category_name(category: str) -> str:
 
 
 def get_caption_for_category(category: str, index: Optional[int] = None) -> str:
-    """Get a caption for an ESC-50 category.
-    
-    Args:
-        category: Category name (e.g., "Rain", "Dog")
-        index: Optional index to select a specific caption variant
-        
-    Returns:
-        Natural language caption
-    """
+    """Get caption for a category."""
     normalized = normalize_category_name(category)
     
     # Check if we have captions for this category
@@ -120,27 +98,15 @@ def get_caption_for_category(category: str, index: Optional[int] = None) -> str:
         # Return first caption by default
         return captions[0]
     
-    # Fallback: generate a simple caption from category name
-    # Convert "Rain" -> "rain sounds", "Dog" -> "dog sounds"
+    # Fallback
     category_lower = normalized.lower()
     return f"{category_lower} sounds"
 
 
 def parse_esc50_filename(filename: str) -> Dict[str, str]:
-    """Parse ESC-50 filename to extract metadata.
+    """Parse ESC-50 filename.
     
-    ESC-50 filenames follow: {fold}-{fname}-{take}-{target}.wav
-    e.g., "1-100032-A-0.wav" where:
-    - fold: 1-5 (cross-validation fold)
-    - fname: original filename
-    - take: A or B (different recordings)
-    - target: category index (0-49)
-    
-    Args:
-        filename: ESC-50 filename
-        
-    Returns:
-        Dictionary with 'fold', 'fname', 'take', 'target', 'category'
+    Format: {fold}-{fname}-{take}-{target}.wav
     """
     basename = filename.replace('.wav', '')
     parts = basename.split('-')
@@ -162,15 +128,7 @@ def parse_esc50_filename(filename: str) -> Dict[str, str]:
 
 
 def get_category_from_esc50_csv(target_id: str, esc50_csv_path: str) -> Optional[str]:
-    """Get category name from ESC-50 CSV file.
-    
-    Args:
-        target_id: Target ID (0-49)
-        esc50_csv_path: Path to ESC-50 meta/esc50.csv
-        
-    Returns:
-        Category name or None
-    """
+    """Get category from ESC-50 CSV."""
     import csv
     
     try:

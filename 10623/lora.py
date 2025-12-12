@@ -1,14 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""
-LoRA (Low-Rank Adaptation) implementation for fine-tuning transformer layers.
-Based on: https://arxiv.org/abs/2106.09685
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,18 +6,7 @@ import typing as tp
 
 
 class LoRALinear(nn.Module):
-    """LoRA adapter for a linear layer.
-    
-    Wraps a linear layer and adds low-rank adaptation:
-    output = (W + BA) @ x
-    
-    where B and A are low-rank matrices with rank r << min(in_features, out_features).
-    
-    Args:
-        linear_layer: The original linear layer to adapt
-        rank: Rank of the low-rank adaptation (r)
-        alpha: Scaling factor for LoRA weights (typically rank or 2*rank)
-        dropout: Dropout probability for LoRA weights
+    """LoRA adapter wrapper for linear layers.
     """
     def __init__(
         self,
@@ -51,53 +29,40 @@ class LoRALinear(nn.Module):
         in_features = linear_layer.in_features
         out_features = linear_layer.out_features
         
-        # Get device from the wrapped linear layer
+        # Get device from the wrapped layer
         device = next(linear_layer.parameters()).device
         
-        # Initialize LoRA weights on the same device as the linear layer
-        # lora_A: random initialization with small values
+        # Initialize LoRA weights
         self.lora_A = nn.Parameter(torch.randn(rank, in_features, device=device) * 0.02)
-        # lora_B: zeros so initial output is zero (delta = 0 at start)
         self.lora_B = nn.Parameter(torch.zeros(out_features, rank, device=device))
-        
-        # Ensure no NaN/Inf in initialization
-        assert not torch.isnan(self.lora_A).any(), "NaN in lora_A initialization"
-        assert not torch.isinf(self.lora_A).any(), "Inf in lora_A initialization"
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Original output
         output = self.linear(x)
         
-        # Ensure LoRA parameters are on the same device as input
-        # (safeguard in case they weren't moved properly)
+        # Make sure LoRA params are on the right device
         device = x.device
         if self.lora_A.device != device:
             self.lora_A.data = self.lora_A.data.to(device)
         if self.lora_B.device != device:
             self.lora_B.data = self.lora_B.data.to(device)
         
-        # LoRA adaptation: BA @ x
-        # lora_A: [rank, in_features], we need [in_features, rank] for matmul
-        # lora_B: [out_features, rank], we need [rank, out_features] for matmul
+        # Apply LoRA: BA @ x
         x_dropout = self.dropout(x)
-        # x @ lora_A.t() = x @ [in_features, rank] = [..., rank]
-        lora_output = x_dropout @ self.lora_A.t()  # [..., rank]
-        # lora_output @ lora_B.t() = [..., rank] @ [rank, out_features] = [..., out_features]
-        lora_output = lora_output @ self.lora_B.t()  # [..., out_features]
+        lora_output = x_dropout @ self.lora_A.t()
+        lora_output = lora_output @ self.lora_B.t()
         
-        # Scale and add
         output = output + self.scaling * lora_output
         return output
     
     def merge_weights(self):
-        """Merge LoRA weights into the original linear layer (for inference)."""
+        """Merge LoRA weights into base weights for faster inference."""
         with torch.no_grad():
             delta_W = self.scaling * (self.lora_B @ self.lora_A)
             self.linear.weight.data += delta_W.t()
     
     def unmerge_weights(self):
-        """Unmerge LoRA weights (restore original weights)."""
+        """Restore original weights."""
         with torch.no_grad():
             delta_W = self.scaling * (self.lora_B @ self.lora_A)
             self.linear.weight.data -= delta_W.t()
@@ -109,34 +74,16 @@ def apply_lora_to_linear(
     alpha: float = 16.0,
     dropout: float = 0.0,
 ) -> LoRALinear:
-    """Apply LoRA to a linear layer.
-    
-    Args:
-        linear_layer: The linear layer to wrap
-        rank: LoRA rank
-        alpha: LoRA alpha scaling factor
-        dropout: Dropout probability
-        
-    Returns:
-        LoRALinear wrapper
-    """
+    """Wrap a linear layer with LoRA."""
     return LoRALinear(linear_layer, rank=rank, alpha=alpha, dropout=dropout)
 
 
 def get_lora_parameters(model: tp.Union[nn.Module, tp.Any]) -> list:
-    """Get all LoRA parameters that should be trained.
-    
-    Args:
-        model: Model containing LoRA adapters (can be nn.Module or MusicGenLoRA)
-        
-    Returns:
-        List of LoRA parameters (lora_A and lora_B)
-    """
+    """Get all LoRA parameters for training."""
     lora_params = []
     
-    # Handle MusicGenLoRA (which is not a nn.Module but has a .lm attribute)
+    # Handle MusicGenLoRA wrapper
     if hasattr(model, 'lm') and not isinstance(model, nn.Module):
-        # This is likely a MusicGenLoRA or similar wrapper
         for module in model.lm.modules():
             if isinstance(module, LoRALinear):
                 lora_params.extend([module.lora_A, module.lora_B])

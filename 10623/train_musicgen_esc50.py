@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Training script for fine-tuning MusicGen-small on ESC-50 using LoRA.
 """
@@ -43,15 +36,7 @@ def compute_cross_entropy(
 ) -> torch.Tensor:
     """Compute cross-entropy loss per codebook.
     
-    Matches the implementation in audiocraft/solvers/musicgen.py
-    
-    Args:
-        logits: Model logits [B, K, T, card]
-        targets: Target tokens [B, K, T]
-        mask: Valid token mask [B, K, T]
-        
-    Returns:
-        Mean cross-entropy loss
+    Based on audiocraft/solvers/musicgen.py
     """
     B, K, T = targets.shape
     assert logits.shape[:-1] == targets.shape
@@ -76,11 +61,9 @@ def compute_cross_entropy(
         else:
             ce_per_codebook.append(torch.tensor(0.0, device=targets.device))
     
-    # Average cross entropy across codebooks
+    # Average across codebooks
     if K > 0:
         ce = ce / K
-    else:
-        ce = torch.tensor(0.0, device=targets.device)
     
     return ce
 
@@ -93,19 +76,7 @@ def train_epoch(
     epoch: int,
     config: dict,
 ) -> Dict[str, float]:
-    """Train for one epoch.
-    
-    Args:
-        model: MusicGenLoRA model
-        dataloader: Training dataloader
-        optimizer: Optimizer
-        device: Device to train on
-        epoch: Current epoch number
-        config: Training configuration
-        
-    Returns:
-        Dictionary of metrics
-    """
+    """Train for one epoch."""
     model.train()
     total_loss = 0.0
     total_ce = 0.0
@@ -114,17 +85,16 @@ def train_epoch(
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
     
     for batch_idx, (audio, infos) in enumerate(pbar):
-        audio = audio.to(device)  # [B, C, T]
+        audio = audio.to(device)
         
-        # Encode audio to tokens using EnCodec
+        # Encode to tokens
         with torch.no_grad():
             audio_tokens, scale = model.compression_model.encode(audio)
-            assert scale is None, "EnCodec should not require rescaling"
+            assert scale is None
         
-        # Prepare conditioning attributes
+        # Prepare text conditioning
         attributes = []
         for info in infos:
-            # Create from description
             from audiocraft.modules.conditioners import ConditioningAttributes
             description = getattr(info, 'description', '')
             if not description:
@@ -132,16 +102,12 @@ def train_epoch(
             attrs = ConditioningAttributes(text={'description': description})
             attributes.append(attrs)
         
-        # Tokenize attributes
-        tokenized = model.lm.condition_provider.tokenize(attributes)
-        
-        # Apply dropout for classifier-free guidance
+        # Apply dropout for CFG
         attributes = model.lm.cfg_dropout(attributes)
         attributes = model.lm.att_dropout(attributes)
         tokenized = model.lm.condition_provider.tokenize(attributes)
         
         # Get condition tensors
-        # Use autocast only if CUDA is available and enabled
         use_amp = config.get('use_amp', True) and device == 'cuda' and torch.cuda.is_available()
         if use_amp:
             with torch.cuda.amp.autocast():
@@ -149,49 +115,46 @@ def train_epoch(
         else:
             condition_tensors = model.lm.condition_provider(tokenized)
         
-        # Create padding mask
+        # Padding mask
         B, K, T = audio_tokens.shape
         padding_mask = torch.ones_like(audio_tokens, dtype=torch.bool, device=device)
         
-        # Compute predictions
+        # Forward pass
         if use_amp:
             with torch.cuda.amp.autocast():
                 model_output = model.lm.compute_predictions(
                     audio_tokens, [], condition_tensors
                 )
-                logits = model_output.logits  # [B, K, T, card]
+                logits = model_output.logits
                 mask = padding_mask & model_output.mask
         else:
             model_output = model.lm.compute_predictions(
                 audio_tokens, [], condition_tensors
             )
-            logits = model_output.logits  # [B, K, T, card]
+            logits = model_output.logits
             mask = padding_mask & model_output.mask
         
         # Compute loss
         loss = compute_cross_entropy(logits, audio_tokens, mask)
         
-        # Check for NaN/Inf
+        # Skip if loss is NaN/Inf
         if not torch.isfinite(loss):
-            print(f"Warning: Non-finite loss detected: {loss.item()}")
-            print(f"  Logits stats: min={logits.min().item():.4f}, max={logits.max().item():.4f}, mean={logits.mean().item():.4f}")
-            print(f"  Mask sum: {mask.sum().item()}")
-            continue  # Skip this batch
+            print(f"Warning: Non-finite loss: {loss.item()}, skipping batch")
+            continue
         
-        # Backward pass
+        # Backward
         optimizer.zero_grad()
         loss.backward()
         
         # Check for NaN gradients
         has_nan_grad = False
         for param in get_lora_parameters(model):
-            if param.grad is not None:
-                if not torch.isfinite(param.grad).all():
-                    has_nan_grad = True
-                    break
+            if param.grad is not None and not torch.isfinite(param.grad).all():
+                has_nan_grad = True
+                break
         
         if has_nan_grad:
-            print(f"Warning: NaN gradients detected, skipping batch")
+            print(f"Warning: NaN gradients, skipping batch")
             optimizer.zero_grad()
             continue
         
@@ -201,7 +164,7 @@ def train_epoch(
                 get_lora_parameters(model), config['max_grad_norm']
             )
             if not torch.isfinite(grad_norm):
-                print(f"Warning: Non-finite grad norm: {grad_norm.item()}, skipping batch")
+                print(f"Warning: Non-finite grad norm, skipping batch")
                 optimizer.zero_grad()
                 continue
         
@@ -232,17 +195,7 @@ def validate(
     device: str,
     config: dict,
 ) -> Dict[str, float]:
-    """Validate the model.
-    
-    Args:
-        model: MusicGenLoRA model
-        dataloader: Validation dataloader
-        device: Device to validate on
-        config: Configuration
-        
-    Returns:
-        Dictionary of metrics
-    """
+    """Validate the model."""
     model.eval()
     total_loss = 0.0
     total_ce = 0.0
@@ -252,11 +205,11 @@ def validate(
         for audio, infos in tqdm(dataloader, desc="Validation"):
             audio = audio.to(device)
             
-            # Encode audio to tokens
+            # Encode to tokens
             audio_tokens, scale = model.compression_model.encode(audio)
             assert scale is None
             
-            # Prepare attributes
+            # Prepare text conditioning
             attributes = []
             for info in infos:
                 from audiocraft.modules.conditioners import ConditioningAttributes
@@ -266,10 +219,8 @@ def validate(
                 attrs = ConditioningAttributes(text={'description': description})
                 attributes.append(attrs)
             
-            # Tokenize
             tokenized = model.lm.condition_provider.tokenize(attributes)
             
-            # Use autocast only if CUDA is available and enabled
             use_amp = config.get('use_amp', True) and device == 'cuda' and torch.cuda.is_available()
             if use_amp:
                 with torch.cuda.amp.autocast():
@@ -458,7 +409,7 @@ def main():
             model.save_lora_weights(str(best_lora_path))
             print(f"Saved best model (val_loss={best_val_loss:.4f})")
     
-    print("\nTraining complete!")
+    print("Training complete")
 
 
 if __name__ == '__main__':

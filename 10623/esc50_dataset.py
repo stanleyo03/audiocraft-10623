@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 ESC-50 dataset loader for MusicGen fine-tuning.
 """
@@ -28,26 +22,13 @@ except ImportError:
 class ESC50Dataset(InfoAudioDataset):
     """Dataset for ESC-50 environmental sounds.
     
-    ESC-50 structure:
-    ESC-50/
-      audio/
-        1-100032-A-0.wav
-        ...
-      meta/
-        esc50.csv
-    
     Args:
         root: Root directory of ESC-50 dataset
         split: 'train', 'valid', 'test', or None (use all)
-        folds: List of folds to use (1-5). If None, uses all folds.
-            For train/valid/test splits, typically use:
-            - train: folds [1, 2, 3]
-            - valid: fold [4]
-            - test: fold [5]
         segment_duration: Duration of audio segments to load (None = full audio)
-        sample_rate: Target sample rate
-        channels: Number of channels (1 for mono)
-        return_info: Whether to return metadata along with audio
+        sample_rate: Target sample rate          
+        channels: Number of channels (1 for mono)           
+        return_info: Whether to return metadata along with audio 
     """
     def __init__(
         self,

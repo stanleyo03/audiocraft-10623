@@ -1,13 +1,6 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
 
-"""
-Wrapper to add LoRA adapters to MusicGen model.
-Applies LoRA to transformer layers in the language model.
-"""
+# Wrapper to add LoRA adapters to MusicGen
+# Applies LoRA to transformer layers
 
 import typing as tp
 import torch
@@ -29,36 +22,19 @@ def add_lora_to_transformer_layer(
     dropout: float = 0.0,
     target_modules: tp.Optional[tp.List[str]] = None,
 ) -> None:
-    """Add LoRA adapters to a transformer layer.
-    
-    Args:
-        layer: Transformer layer (StreamingTransformerLayer)
-        rank: LoRA rank
-        alpha: LoRA alpha scaling factor
-        dropout: Dropout probability
-        target_modules: List of module names to apply LoRA to.
-            If None, applies to attention and feedforward layers.
-    """
+    """Add LoRA to transformer layer."""
     if target_modules is None:
         target_modules = ['self_attn', 'linear1', 'linear2']
     
-    # Apply LoRA to attention layers
+    # Apply to attention
     if 'self_attn' in target_modules and hasattr(layer, 'self_attn'):
         attn = layer.self_attn
-        # Check if it's a StreamingMultiheadAttention
-        if hasattr(attn, 'in_proj_weight'):
-            # For custom attention, we need to handle in_proj_weight differently
-            # For now, we'll apply LoRA to the out_proj if it exists
-            if hasattr(attn, 'out_proj'):
-                attn.out_proj = apply_lora_to_linear(
-                    attn.out_proj, rank=rank, alpha=alpha, dropout=dropout
-                )
-        elif hasattr(attn, 'out_proj'):
+        if hasattr(attn, 'out_proj'):
             attn.out_proj = apply_lora_to_linear(
                 attn.out_proj, rank=rank, alpha=alpha, dropout=dropout
             )
     
-    # Apply LoRA to feedforward layers
+    # Apply to feedforward
     if 'linear1' in target_modules and hasattr(layer, 'linear1'):
         layer.linear1 = apply_lora_to_linear(
             layer.linear1, rank=rank, alpha=alpha, dropout=dropout
@@ -77,21 +53,9 @@ def add_lora_to_lm_model(
     dropout: float = 0.0,
     target_modules: tp.Optional[tp.List[str]] = None,
 ) -> LMModel:
-    """Add LoRA adapters to all transformer layers in an LMModel.
-    
-    Args:
-        lm_model: The language model to add LoRA to
-        rank: LoRA rank
-        alpha: LoRA alpha scaling factor
-        dropout: Dropout probability
-        target_modules: List of module names to apply LoRA to
-        
-    Returns:
-        The same model with LoRA adapters added
-    """
+    """Add LoRA to all transformer layers."""
     transformer = lm_model.transformer
     
-    # Apply LoRA to each transformer layer
     if hasattr(transformer, 'layers'):
         for layer in transformer.layers:
             add_lora_to_transformer_layer(
@@ -99,7 +63,6 @@ def add_lora_to_lm_model(
                 target_modules=target_modules
             )
     elif hasattr(transformer, 'encoder'):
-        # Alternative structure
         for layer in transformer.encoder.layers:
             add_lora_to_transformer_layer(
                 layer, rank=rank, alpha=alpha, dropout=dropout,
@@ -110,17 +73,9 @@ def add_lora_to_lm_model(
 
 
 class MusicGenLoRA(MusicGen):
-    """MusicGen model with LoRA adapters for fine-tuning.
+    """MusicGen with LoRA adapters for fine-tuning.
     
-    This wrapper adds LoRA adapters to the transformer layers while keeping
-    the pretrained weights frozen. Only LoRA parameters are trainable.
-    
-    Args:
-        base_model: Pretrained MusicGen model
-        lora_rank: Rank of LoRA adapters
-        lora_alpha: Alpha scaling factor for LoRA
-        lora_dropout: Dropout probability for LoRA
-        target_modules: List of module names to apply LoRA to
+    Only LoRA parameters are trainable, base weights stay frozen.
     """
     def __init__(
         self,
@@ -130,7 +85,6 @@ class MusicGenLoRA(MusicGen):
         lora_dropout: float = 0.0,
         target_modules: tp.Optional[tp.List[str]] = None,
     ):
-        # Initialize with base model components
         super().__init__(
             name=base_model.name,
             compression_model=base_model.compression_model,
@@ -138,7 +92,7 @@ class MusicGenLoRA(MusicGen):
             max_duration=base_model.max_duration,
         )
         
-        # Add LoRA to the language model
+        # Add LoRA to transformer layers
         self.lm = add_lora_to_lm_model(
             self.lm,
             rank=lora_rank,
@@ -147,54 +101,38 @@ class MusicGenLoRA(MusicGen):
             target_modules=target_modules,
         )
         
-        # Store LoRA config
         self.lora_rank = lora_rank
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         
-        # Freeze all non-LoRA parameters
         self._freeze_base_parameters()
     
     def train(self, mode: bool = True):
-        """Set the model to training mode.
-        
-        Args:
-            mode: If True, set to training mode. If False, set to eval mode.
-        """
-        # BaseGenModel is not a nn.Module, so we set submodules
         self.lm.train(mode)
-        self.compression_model.eval()  # Always keep compression model in eval
+        self.compression_model.eval()  # Keep compression model frozen
         return self
     
     def eval(self):
-        """Set the model to evaluation mode."""
         self.lm.eval()
         self.compression_model.eval()
         return self
     
     def _freeze_base_parameters(self):
-        """Freeze all base model parameters except LoRA."""
-        # BaseGenModel is not a nn.Module, so we need to freeze submodules
-        # Freeze compression model
+        """Freeze base model, only train LoRA."""
         for param in self.compression_model.parameters():
             param.requires_grad = False
         
-        # Freeze language model (except LoRA)
         for param in self.lm.parameters():
             param.requires_grad = False
         
-        # Unfreeze LoRA parameters
+        # Unfreeze LoRA
         for module in self.lm.modules():
             if isinstance(module, LoRALinear):
                 module.lora_A.requires_grad = True
                 module.lora_B.requires_grad = True
     
     def to_device(self, device: tp.Union[str, torch.device]):
-        """Move model to device, ensuring LoRA parameters are moved too.
-        
-        Args:
-            device: Target device (e.g., 'cuda', 'cpu', or torch.device)
-        """
+        """Move model to device."""
         if isinstance(device, str):
             device = torch.device(device)
         
@@ -202,7 +140,6 @@ class MusicGenLoRA(MusicGen):
         if hasattr(self.compression_model, 'to'):
             self.compression_model = self.compression_model.to(device)
         else:
-            # Manual move for non-nn.Module
             for param in self.compression_model.parameters():
                 param.data = param.data.to(device)
                 if param.grad is not None:
@@ -212,36 +149,26 @@ class MusicGenLoRA(MusicGen):
         if hasattr(self.lm, 'to'):
             self.lm = self.lm.to(device)
         else:
-            # Manual move for non-nn.Module
             for param in self.lm.parameters():
                 param.data = param.data.to(device)
                 if param.grad is not None:
                     param.grad = param.grad.to(device)
         
-        # Explicitly move LoRA parameters
+        # Move LoRA params
         for module in self.lm.modules():
             if isinstance(module, LoRALinear):
                 module.lora_A.data = module.lora_A.data.to(device)
                 module.lora_B.data = module.lora_B.data.to(device)
-                # Also move dropout if it has parameters (it shouldn't, but just in case)
-                if hasattr(module.dropout, 'to'):
-                    module.dropout = module.dropout.to(device)
         
         return self
     
     def get_lora_parameters(self):
-        """Get all LoRA parameters for optimizer."""
-        # BaseGenModel is not a nn.Module, so get parameters from lm
+        """Get LoRA parameters for optimizer."""
         return get_lora_parameters(self.lm)
     
     def save_lora_weights(self, path: str):
-        """Save only LoRA weights to a file.
-        
-        Args:
-            path: Path to save the LoRA weights
-        """
+        """Save LoRA weights."""
         lora_state_dict = {}
-        # BaseGenModel is not a nn.Module, so iterate over lm submodules
         for name, module in self.lm.named_modules():
             if isinstance(module, LoRALinear):
                 lora_state_dict[f"lm.{name}.lora_A"] = module.lora_A
@@ -250,16 +177,11 @@ class MusicGenLoRA(MusicGen):
         torch.save(lora_state_dict, path)
     
     def load_lora_weights(self, path: str):
-        """Load LoRA weights from a file.
-        
-        Args:
-            path: Path to load the LoRA weights from
-        """
+        """Load LoRA weights."""
         lora_state_dict = torch.load(path, map_location=self.device)
-        # BaseGenModel is not a nn.Module, so iterate over lm submodules
         for name, module in self.lm.named_modules():
             if isinstance(module, LoRALinear):
-                # Try both with and without "lm." prefix for compatibility
+                # Try with and without "lm." prefix
                 key_a = f"lm.{name}.lora_A"
                 key_a_alt = f"{name}.lora_A"
                 key_b = f"lm.{name}.lora_B"
@@ -284,23 +206,9 @@ def create_musicgen_lora(
     lora_dropout: float = 0.0,
     target_modules: tp.Optional[tp.List[str]] = None,
 ) -> MusicGenLoRA:
-    """Create a MusicGen model with LoRA adapters.
-    
-    Args:
-        model_name: Name of the pretrained MusicGen model
-        device: Device to load the model on
-        lora_rank: LoRA rank
-        lora_alpha: LoRA alpha scaling factor
-        lora_dropout: Dropout probability
-        target_modules: List of module names to apply LoRA to
-        
-    Returns:
-        MusicGenLoRA model
-    """
-    # Load base model
+    """Create MusicGen model with LoRA."""
     base_model = MusicGen.get_pretrained(model_name, device=device)
     
-    # Wrap with LoRA
     model = MusicGenLoRA(
         base_model,
         lora_rank=lora_rank,
@@ -309,7 +217,6 @@ def create_musicgen_lora(
         target_modules=target_modules,
     )
     
-    # Explicitly move to device to ensure LoRA parameters are on correct device
     if device is not None:
         model.to_device(device)
     
